@@ -2,30 +2,31 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Title
+# Page config
 st.set_page_config(page_title="IP Reputation Dashboard", layout="wide")
 st.title("🔍 IP Reputation Dashboard")
 
 # Input
 ip = st.text_input("Enter an IP Address:", placeholder="e.g. 8.8.8.8")
 
-# Load API keys from Streamlit secrets
+# Load API keys
 VT_API_KEY = st.secrets.get("VT_API_KEY", "")
 ABUSEIPDB_API_KEY = st.secrets.get("ABUSEIPDB_API_KEY", "")
 WHOISXML_API_KEY = st.secrets.get("WHOISXML_API_KEY", "")
 SECURITYTRAILS_API_KEY = st.secrets.get("SECURITYTRAILS_API_KEY", "")
 
+# Utility functions
 def dict_to_table(data: dict, title: str):
-    """Utility to convert dictionary to a table"""
+    """Convert dict to Streamlit table"""
     if not data:
         st.warning(f"No data found for {title}")
         return
-    df = pd.DataFrame(data.items(), columns=["Field", "Value"])
+    df = pd.DataFrame(list(data.items()), columns=["Field", "Value"])
     st.subheader(title)
     st.table(df)
 
 def list_to_table(data: list, title: str):
-    """Utility to convert list of records to a dataframe table"""
+    """Convert list of dicts to Streamlit dataframe"""
     if not data:
         st.warning(f"No records found for {title}")
         return
@@ -33,6 +34,18 @@ def list_to_table(data: list, title: str):
     st.subheader(title)
     st.dataframe(df)
 
+def flatten_dict(d, parent_key='', sep='.'):
+    """Flatten nested dictionaries for tabular display"""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+# Processing
 if ip:
     st.markdown("---")
 
@@ -42,8 +55,9 @@ if ip:
         url = f"https://whoisxmlapi.com/whoisserver/Whois?apiKey={WHOISXML_API_KEY}&domainName={ip}&outputFormat=JSON"
         try:
             res = requests.get(url, timeout=20).json()
-            whois_data = res.get("WhoisRecord", {}).get("registryData", {})
-            dict_to_table(whois_data, "WHOIS Information")
+            whois_record = res.get("WhoisRecord", {})
+            flat_whois = flatten_dict(whois_record)  # flatten all nested fields
+            dict_to_table(flat_whois, "WHOIS Information")
         except Exception as e:
             st.error(f"WHOIS Error: {e}")
 
@@ -55,7 +69,8 @@ if ip:
         try:
             res = requests.get(url, headers=headers, timeout=20).json()
             data = res.get("data", {}).get("attributes", {})
-            dict_to_table(data, "VirusTotal Results")
+            flat_vt = flatten_dict(data)
+            dict_to_table(flat_vt, "VirusTotal Results")
         except Exception as e:
             st.error(f"VirusTotal Error: {e}")
 
@@ -67,7 +82,8 @@ if ip:
         try:
             res = requests.get(url, headers=headers, timeout=20).json()
             data = res.get("data", {})
-            dict_to_table(data, "AbuseIPDB Results")
+            flat_abuse = flatten_dict(data)
+            dict_to_table(flat_abuse, "AbuseIPDB Results")
         except Exception as e:
             st.error(f"AbuseIPDB Error: {e}")
 
