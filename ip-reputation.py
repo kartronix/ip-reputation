@@ -1,83 +1,94 @@
-# WHOIS Section
-if WHOISXML_API_KEY:
-    st.info("Fetching WHOIS data from WhoisXML API...")
-    url = f"https://whoisxmlapi.com/whoisserver/Whois?apiKey={WHOISXML_API_KEY}&domainName={ip}&outputFormat=JSON"
+import os
+import requests
+import streamlit as st
+import pandas as pd
+from ipwhois import IPWhois
+
+# Load API Keys from environment variables
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
+WHOISXML_API_KEY = os.getenv("WHOISXML_API_KEY", "")
+VT_API_KEY = os.getenv("VT_API_KEY", "")
+SECURITYTRAILS_API_KEY = os.getenv("SECURITYTRAILS_API_KEY", "")
+
+# ------------------- WHOIS LOOKUP -------------------
+def get_whois_data(ip):
     try:
-        res = requests.get(url, timeout=20).json()
-        whois_record = res.get("WhoisRecord", {})
-
-        st.subheader("📄 WHOIS Information")
-
-        # General
-        reg_data = whois_record.get("registryData", {}).get("registrant", {})
-        reg_name = reg_data.get("name")
-        reg_org = reg_data.get("organization")
-        reg_country = reg_data.get("country")
-        reg_email = reg_data.get("email")
-        reg_phone = reg_data.get("telephone")
-
-        registrar = whois_record.get("registrarName", "N/A")
-
-        important_dates = {
-            "Created": whois_record.get("registryData", {}).get("createdDate"),
-            "Updated": whois_record.get("registryData", {}).get("updatedDate"),
-            "Expires": whois_record.get("registryData", {}).get("expiresDate")
-        }
-
-        # Show Registrant
-        st.markdown("**Registrant Details**")
-        st.table(pd.DataFrame([
-            ["Name", reg_name],
-            ["Organization", reg_org],
-            ["Country", reg_country],
-            ["Email", reg_email],
-            ["Phone", reg_phone]
-        ], columns=["Field", "Value"]))
-
-        # Registrar Info
-        st.markdown("**Registrar Details**")
-        st.table(pd.DataFrame([
-            ["Registrar", registrar],
-            ["IANA ID", whois_record.get("registrarIANAID")],
-            ["WHOIS Server", whois_record.get("registryData", {}).get("whoisServer")]
-        ], columns=["Field", "Value"]))
-
-        # Important Dates
-        st.markdown("**Important Dates**")
-        st.table(pd.DataFrame(important_dates.items(), columns=["Field", "Value"]))
-
-        # Name Servers
-        ns = whois_record.get("registryData", {}).get("nameServers", {}).get("hostNames", [])
-        if ns:
-            st.markdown("**Name Servers**")
-            st.table(pd.DataFrame(ns, columns=["Name Server"]))
-
+        if WHOISXML_API_KEY:  # Use API if key is available
+            url = f"https://whoisapi.com/api/v1?apiKey={WHOISXML_API_KEY}&ipAddress={ip}&outputFormat=JSON"
+            response = requests.get(url, timeout=15)
+            data = response.json().get("registryData", {})
+            return pd.DataFrame(data.items(), columns=["Field", "Value"])
+        else:  # Fallback to local ipwhois
+            obj = IPWhois(ip)
+            data = obj.lookup_rdap()
+            return pd.DataFrame(data.items(), columns=["Field", "Value"])
     except Exception as e:
-        st.error(f"WHOIS API Error: {e}")
-else:
-    st.info("Fetching WHOIS data locally (ipwhois)...")
+        return pd.DataFrame([["Error", str(e)]], columns=["Field", "Value"])
+
+# ------------------- ABUSEIPDB -------------------
+def get_abuseipdb_data(ip):
     try:
-        obj = IPWhois(ip)
-        whois_result = obj.lookup_whois()
+        if not ABUSEIPDB_API_KEY:
+            return pd.DataFrame([["Error", "No API key set"]], columns=["Field", "Value"])
 
-        st.subheader("📄 WHOIS Information (Local)")
-
-        # Registrant
-        contacts = whois_result.get("nets", [{}])[0]
-        st.markdown("**Registrant Details**")
-        st.table(pd.DataFrame([
-            ["Name", contacts.get("name")],
-            ["Description", contacts.get("description")],
-            ["Country", contacts.get("country")]
-        ], columns=["Field", "Value"]))
-
-        # Dates
-        st.markdown("**Important Dates**")
-        st.table(pd.DataFrame([
-            ["CIDR", contacts.get("cidr")],
-            ["Start", contacts.get("start_address")],
-            ["End", contacts.get("end_address")]
-        ], columns=["Field", "Value"]))
-
+        url = "https://api.abuseipdb.com/api/v2/check"
+        querystring = {"ipAddress": ip, "maxAgeInDays": "90"}
+        headers = {"Accept": "application/json", "Key": ABUSEIPDB_API_KEY}
+        response = requests.get(url, headers=headers, params=querystring, timeout=15)
+        data = response.json().get("data", {})
+        return pd.DataFrame(data.items(), columns=["Metric", "Value"])
     except Exception as e:
-        st.error(f"Local WHOIS Error: {e}")
+        return pd.DataFrame([["Error", str(e)]], columns=["Metric", "Value"])
+
+# ------------------- VIRUSTOTAL -------------------
+def get_virustotal_data(ip):
+    try:
+        if not VT_API_KEY:
+            return pd.DataFrame([["Error", "No API key set"]], columns=["Field", "Value"])
+
+        url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+        headers = {"x-apikey": VT_API_KEY}
+        response = requests.get(url, headers=headers, timeout=15)
+        data = response.json().get("data", {}).get("attributes", {})
+        return pd.DataFrame(data.items(), columns=["Field", "Value"])
+    except Exception as e:
+        return pd.DataFrame([["Error", str(e)]], columns=["Field", "Value"])
+
+# ------------------- SECURITYTRAILS -------------------
+def get_securitytrails_data(ip):
+    try:
+        if not SECURITYTRAILS_API_KEY:
+            return pd.DataFrame([["Error", "No API key set"]], columns=["Field", "Value"])
+
+        url = f"https://api.securitytrails.com/v1/history/ip/{ip}/dns/a"
+        headers = {"APIKEY": SECURITYTRAILS_API_KEY}
+        response = requests.get(url, headers=headers, timeout=15)
+        records = response.json().get("records", [])
+        if records:
+            return pd.DataFrame(records)
+        return pd.DataFrame([["No records found"]], columns=["Result"])
+    except Exception as e:
+        return pd.DataFrame([["Error", str(e)]], columns=["Result"])
+
+# ------------------- STREAMLIT APP -------------------
+st.set_page_config(page_title="IP Reputation Dashboard", layout="wide")
+st.title("🌍 IP Reputation Dashboard")
+
+ip = st.text_input("Enter IP Address", "8.8.8.8")
+
+if st.button("Check Reputation"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("WHOIS Information")
+        st.table(get_whois_data(ip))
+
+        st.subheader("VirusTotal Report")
+        st.table(get_virustotal_data(ip))
+
+    with col2:
+        st.subheader("AbuseIPDB Reputation")
+        st.table(get_abuseipdb_data(ip))
+
+        st.subheader("Historical DNS (SecurityTrails)")
+        st.dataframe(get_securitytrails_data(ip))
