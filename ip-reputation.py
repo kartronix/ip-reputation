@@ -1,162 +1,147 @@
 import streamlit as st
 import requests
-import socket
 import whois
 import pandas as pd
+from ipwhois import IPWhois
 
-st.set_page_config(page_title="IP Reputation Dashboard", layout="wide")
+# -------------------------------
+# Load API Keys from Secrets
+# -------------------------------
+VT_API_KEY = st.secrets.get("virustotal", "")
+ABUSE_API_KEY = st.secrets.get("abuseipdb", "")
+SECURITYTRAILS_KEY = st.secrets.get("securitytrails", "")
 
-st.title("🔍 IP Reputation Dashboard")
-
-# ---------------------------
-# WHOIS
-# ---------------------------
-def get_whois(ip):
+# -------------------------------
+# Helper: Safe API request
+# -------------------------------
+def safe_request(url, headers=None, params=None):
     try:
-        w = whois.whois(ip)
-        data = {k: (", ".join(v) if isinstance(v, list) else str(v)) for k, v in w.items() if v}
-        if not data:
-            return {"Error": "No WHOIS data found"}
-        return data
-    except Exception as e:
-        return {"Error": f"Exception: {str(e)}"}
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        if resp.status_code == 200:
+            return resp.json()
+        return None
+    except Exception:
+        return None
 
+# -------------------------------
+# WHOIS Info
+# -------------------------------
+def get_whois_info(ip_or_domain):
+    try:
+        w = whois.whois(ip_or_domain)
+        whois_data = {
+            "Domain": w.domain_name if w.domain_name else "Not available",
+            "Registrar": w.registrar if w.registrar else "Not available",
+            "Org": w.org if w.org else "Not available",
+            "Country": w.country if w.country else "Not available",
+            "Creation Date": str(w.creation_date) if w.creation_date else "Not available",
+            "Expiration Date": str(w.expiration_date) if w.expiration_date else "Not available",
+            "Emails": "\n".join(w.emails) if w.emails else "Not available"
+        }
+    except Exception:
+        # fallback with ipwhois
+        try:
+            obj = IPWhois(ip_or_domain)
+            res = obj.lookup_rdap()
+            whois_data = {
+                "ASN": res.get("asn", "Not available"),
+                "Org": res.get("network", {}).get("name", "Not available"),
+                "Country": res.get("asn_country_code", "Not available"),
+                "CIDR": res.get("network", {}).get("cidr", "Not available"),
+                "Emails": "\n".join(res.get("network", {}).get("emails", [])) if res.get("network", {}).get("emails") else "Not available"
+            }
+        except Exception:
+            whois_data = {"Error": "Error obtaining data"}
+    return pd.DataFrame(list(whois_data.items()), columns=["Field", "Value"])
 
-# ---------------------------
+# -------------------------------
 # AbuseIPDB
-# ---------------------------
-def get_abuseipdb(ip):
+# -------------------------------
+def get_abuseip_info(ip):
+    if not ABUSE_API_KEY:
+        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
     try:
         url = "https://api.abuseipdb.com/api/v2/check"
-        querystring = {"ipAddress": ip, "maxAgeInDays": "90"}
-        headers = {
-            "Accept": "application/json",
-            "Key": st.secrets["ABUSEIPDB_API_KEY"]
+        headers = {"Key": ABUSE_API_KEY, "Accept": "application/json"}
+        params = {"ipAddress": ip, "maxAgeInDays": 90}
+        data = safe_request(url, headers=headers, params=params)
+        if not data:
+            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        d = data.get("data", {})
+        abuse_data = {
+            "IP Address": d.get("ipAddress", "Not available"),
+            "Abuse Confidence": d.get("abuseConfidenceScore", "Not available"),
+            "Country": d.get("countryCode", "Not available"),
+            "Domain": d.get("domain", "Not available"),
+            "ISP": d.get("isp", "Not available"),
+            "Usage Type": d.get("usageType", "Not available"),
+            "Total Reports": d.get("totalReports", "Not available"),
         }
-        resp = requests.get(url, headers=headers, params=querystring)
-        data = resp.json()
+        return pd.DataFrame(list(abuse_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
 
-        if "errors" in data:
-            return {"Error": data["errors"][0].get("detail", "Error obtaining data")}
-
-        if "data" not in data:
-            return {"Error": "Unexpected response from AbuseIPDB"}
-
-        d = data["data"]
-        return {
-            "IP Address": d.get("ipAddress"),
-            "Abuse Confidence Score": d.get("abuseConfidenceScore"),
-            "Country Code": d.get("countryCode"),
-            "Domain": d.get("domain"),
-            "ISP": d.get("isp"),
-            "Usage Type": d.get("usageType"),
-            "Hostnames": ", ".join(d.get("hostnames", [])) if d.get("hostnames") else None,
-            "Total Reports": d.get("totalReports"),
-            "Last Reported At": d.get("lastReportedAt"),
-        }
-
-    except Exception as e:
-        return {"Error": f"Exception: {str(e)}"}
-
-
-# ---------------------------
+# -------------------------------
 # VirusTotal
-# ---------------------------
-def get_virustotal(ip):
+# -------------------------------
+def get_virustotal_info(ip):
+    if not VT_API_KEY:
+        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
     try:
         url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
-        headers = {"x-apikey": st.secrets["VT_API_KEY"]}
-        resp = requests.get(url, headers=headers)
-        data = resp.json()
-
-        if "error" in data:
-            return {"Error": data["error"].get("message", "Error obtaining data")}
-
-        if "data" not in data:
-            return {"Error": "Unexpected response from VirusTotal"}
-
-        d = data["data"]["attributes"]
-        return {
-            "IP Address": ip,
-            "AS Owner": d.get("as_owner"),
-            "Country": d.get("country"),
-            "Reputation": d.get("reputation"),
-            "Harmless Votes": d.get("total_votes", {}).get("harmless"),
-            "Malicious Votes": d.get("total_votes", {}).get("malicious"),
-            "Last Analysis Stats": str(d.get("last_analysis_stats")),
+        headers = {"x-apikey": VT_API_KEY}
+        data = safe_request(url, headers=headers)
+        if not data:
+            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        attr = data.get("data", {}).get("attributes", {})
+        vt_data = {
+            "Country": attr.get("country", "Not available"),
+            "ASN": attr.get("asn", "Not available"),
+            "Org": attr.get("as_owner", "Not available"),
+            "Reputation": attr.get("reputation", "Not available"),
+            "Harmless Votes": attr.get("last_analysis_stats", {}).get("harmless", "Not available"),
+            "Malicious Votes": attr.get("last_analysis_stats", {}).get("malicious", "Not available"),
         }
-    except Exception as e:
-        return {"Error": f"Exception: {str(e)}"}
+        return pd.DataFrame(list(vt_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
 
-
-# ---------------------------
-# SecurityTrails (Historical DNS)
-# ---------------------------
+# -------------------------------
+# SecurityTrails
+# -------------------------------
 def get_securitytrails(ip):
+    if not SECURITYTRAILS_KEY:
+        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
     try:
-        url = f"https://api.securitytrails.com/v1/history/{ip}/dns/a"
-        headers = {"APIKEY": st.secrets["SECURITYTRAILS_API_KEY"]}
-        resp = requests.get(url, headers=headers)
-        data = resp.json()
+        url = f"https://api.securitytrails.com/v1/ips/{ip}"
+        headers = {"APIKEY": SECURITYTRAILS_KEY}
+        data = safe_request(url, headers=headers)
+        if not data:
+            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        st_data = {
+            "Hostname": ", ".join(data.get("hostnames", [])) if data.get("hostnames") else "Not available",
+            "PTR Record": data.get("ptr", "Not available"),
+        }
+        return pd.DataFrame(list(st_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
 
-        if "error" in data:
-            return {"Error": data["error"].get("message", "Error obtaining data")}
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.title("🔍 IP Reputation & WHOIS Lookup")
 
-        records = data.get("records", [])
-        if not records:
-            return {"Error": "No DNS history available"}
-
-        output = []
-        for r in records:
-            values = r.get("values", [])
-            for v in values:
-                output.append({
-                    "IP": v.get("ip"),
-                    "First Seen": v.get("first_seen"),
-                    "Last Seen": v.get("last_seen")
-                })
-
-        if not output:
-            return {"Error": "No valid DNS records found"}
-
-        return output
-    except Exception as e:
-        return {"Error": f"Exception: {str(e)}"}
-
-
-# ---------------------------
-# Display Table Helper
-# ---------------------------
-def display_table(title, data):
-    st.subheader(title)
-    if isinstance(data, dict):
-        df = pd.DataFrame(list(data.items()), columns=["Field", "Value"])
-        st.table(df)
-    elif isinstance(data, list) and data and isinstance(data[0], dict):
-        df = pd.DataFrame(data)
-        st.table(df)
-    else:
-        st.write("Error obtaining data")
-
-
-# ---------------------------
-# MAIN
-# ---------------------------
-ip = st.text_input("Enter an IP address", "")
+ip = st.text_input("Enter an IP address or domain:")
 
 if ip:
-    col1, col2 = st.columns(2)
+    st.subheader("WHOIS Information")
+    st.table(get_whois_info(ip))
 
-    with col1:
-        whois_data = get_whois(ip)
-        display_table("WHOIS Information", whois_data)
+    st.subheader("AbuseIPDB Information")
+    st.table(get_abuseip_info(ip))
 
-        abuse_data = get_abuseipdb(ip)
-        display_table("AbuseIPDB Reputation", abuse_data)
+    st.subheader("VirusTotal Information")
+    st.table(get_virustotal_info(ip))
 
-    with col2:
-        vt_data = get_virustotal(ip)
-        display_table("VirusTotal Analysis", vt_data)
-
-        st_data = get_securitytrails(ip)
-        display_table("SecurityTrails Historical DNS", st_data)
+    st.subheader("SecurityTrails Information")
+    st.table(get_securitytrails(ip))
