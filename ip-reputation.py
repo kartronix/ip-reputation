@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
-import os
 from ipwhois import IPWhois
 
-# =============== Utility Functions =================
+# ================= Utility Functions =================
 
 def get_whois(ip):
     """Retrieve WHOIS info using ipwhois (no API keys needed)."""
@@ -32,14 +31,8 @@ def get_abuseipdb(ip, api_key):
     """Check reputation of IP from AbuseIPDB."""
     try:
         url = "https://api.abuseipdb.com/api/v2/check"
-        querystring = {
-            "ipAddress": ip,
-            "maxAgeInDays": "90"
-        }
-        headers = {
-            "Accept": "application/json",
-            "Key": api_key
-        }
+        querystring = {"ipAddress": ip, "maxAgeInDays": "90"}
+        headers = {"Accept": "application/json", "Key": api_key}
         resp = requests.get(url, headers=headers, params=querystring)
         data = resp.json().get("data", {})
 
@@ -70,16 +63,43 @@ def get_securitytrails(ip, api_key):
         return pd.DataFrame([["Error", str(e)]], columns=["Field", "Value"])
 
 
-# =============== Streamlit UI =================
+def get_virustotal(ip, api_key):
+    """Fetch IP reputation from VirusTotal."""
+    try:
+        url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+        headers = {"x-apikey": api_key}
+        resp = requests.get(url, headers=headers)
+        data = resp.json().get("data", {}).get("attributes", {})
+
+        vt_data = [
+            ["IP Address", ip],
+            ["Harmless", data.get("last_analysis_stats", {}).get("harmless")],
+            ["Malicious", data.get("last_analysis_stats", {}).get("malicious")],
+            ["Suspicious", data.get("last_analysis_stats", {}).get("suspicious")],
+            ["Undetected", data.get("last_analysis_stats", {}).get("undetected")],
+            ["Reputation", data.get("reputation")],
+            ["Country", data.get("country")],
+            ["ASN", data.get("asn")],
+        ]
+
+        return pd.DataFrame(vt_data, columns=["Field", "Value"])
+    except Exception as e:
+        return pd.DataFrame([["Error", str(e)]], columns=["Field", "Value"])
+
+
+# ================= Streamlit UI =================
 
 st.set_page_config(page_title="IP Reputation Checker", layout="wide")
 st.title("🔍 IP Reputation & WHOIS Lookup")
 
-# Sidebar for inputs
+# Sidebar
 st.sidebar.header("Configuration")
 ip = st.sidebar.text_input("Enter IP Address", "8.8.8.8")
-abuseipdb_key = st.sidebar.text_input("AbuseIPDB API Key", type="password")
-securitytrails_key = st.sidebar.text_input("SecurityTrails API Key", type="password")
+
+# Load keys from secrets
+abuseipdb_key = st.secrets.get("ABUSEIPDB_KEY", None)
+securitytrails_key = st.secrets.get("SECURITYTRAILS_KEY", None)
+virustotal_key = st.secrets.get("VT_KEY", None)
 
 if st.sidebar.button("Check IP"):
     st.subheader(f"Results for IP: {ip}")
@@ -89,18 +109,20 @@ if st.sidebar.button("Check IP"):
     whois_df = get_whois(ip)
     st.dataframe(whois_df, use_container_width=True)
 
-    # AbuseIPDB Section
+    # AbuseIPDB
     if abuseipdb_key:
         st.markdown("### 🚨 AbuseIPDB Reputation")
         abuse_df = get_abuseipdb(ip, abuseipdb_key)
         st.dataframe(abuse_df, use_container_width=True)
-    else:
-        st.info("Provide AbuseIPDB API key in sidebar to check reputation.")
 
-    # SecurityTrails Section
+    # SecurityTrails
     if securitytrails_key:
         st.markdown("### 🌐 SecurityTrails DNS History")
         st_df = get_securitytrails(ip, securitytrails_key)
         st.dataframe(st_df, use_container_width=True)
-    else:
-        st.info("Provide SecurityTrails API key in sidebar to fetch DNS history.")
+
+    # VirusTotal
+    if virustotal_key:
+        st.markdown("### 🛡️ VirusTotal Reputation")
+        vt_df = get_virustotal(ip, virustotal_key)
+        st.dataframe(vt_df, use_container_width=True)
