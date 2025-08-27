@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+from ipwhois import IPWhois
 
 # Page config
 st.set_page_config(page_title="IP Reputation Dashboard", layout="wide")
@@ -9,15 +10,14 @@ st.title("🔍 IP Reputation Dashboard")
 # Input
 ip = st.text_input("Enter an IP Address:", placeholder="e.g. 8.8.8.8")
 
-# Load API keys
+# Load API keys (optional)
 VT_API_KEY = st.secrets.get("VT_API_KEY", "")
-ABUSEIPDB_API_KEY = st.secrets.get("ABUSEIPDB_API_KEY", "")
 WHOISXML_API_KEY = st.secrets.get("WHOISXML_API_KEY", "")
 SECURITYTRAILS_API_KEY = st.secrets.get("SECURITYTRAILS_API_KEY", "")
+ABUSEIPDB_API_KEY = st.secrets.get("ABUSEIPDB_API_KEY", "")
 
 # Utility functions
 def dict_to_table(data: dict, title: str):
-    """Convert dict to Streamlit table"""
     if not data:
         st.warning(f"No data found for {title}")
         return
@@ -26,7 +26,6 @@ def dict_to_table(data: dict, title: str):
     st.table(df)
 
 def list_to_table(data: list, title: str):
-    """Convert list of dicts to Streamlit dataframe"""
     if not data:
         st.warning(f"No records found for {title}")
         return
@@ -35,7 +34,6 @@ def list_to_table(data: list, title: str):
     st.dataframe(df)
 
 def flatten_dict(d, parent_key='', sep='.'):
-    """Flatten nested dictionaries for tabular display"""
     items = []
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
@@ -51,15 +49,24 @@ if ip:
 
     # 1. WHOIS Lookup
     if WHOISXML_API_KEY:
-        st.info("Fetching WHOIS data...")
+        st.info("Fetching WHOIS data from WhoisXML API...")
         url = f"https://whoisxmlapi.com/whoisserver/Whois?apiKey={WHOISXML_API_KEY}&domainName={ip}&outputFormat=JSON"
         try:
             res = requests.get(url, timeout=20).json()
             whois_record = res.get("WhoisRecord", {})
-            flat_whois = flatten_dict(whois_record)  # flatten all nested fields
-            dict_to_table(flat_whois, "WHOIS Information")
+            flat_whois = flatten_dict(whois_record)
+            dict_to_table(flat_whois, "WHOIS Information (WhoisXML API)")
         except Exception as e:
-            st.error(f"WHOIS Error: {e}")
+            st.error(f"WHOIS API Error: {e}")
+    else:
+        st.info("Fetching WHOIS data locally (ipwhois)...")
+        try:
+            obj = IPWhois(ip)
+            whois_result = obj.lookup_whois()
+            flat_whois = flatten_dict(whois_result)
+            dict_to_table(flat_whois, "WHOIS Information (Free Lookup)")
+        except Exception as e:
+            st.error(f"Local WHOIS Error: {e}")
 
     # 2. VirusTotal
     if VT_API_KEY:
@@ -74,16 +81,16 @@ if ip:
         except Exception as e:
             st.error(f"VirusTotal Error: {e}")
 
-    # 3. AbuseIPDB
+    # 3. AbuseIPDB Reputation
     if ABUSEIPDB_API_KEY:
-        st.info("Fetching AbuseIPDB data...")
+        st.info("Fetching AbuseIPDB reputation data...")
         headers = {"Key": ABUSEIPDB_API_KEY, "Accept": "application/json"}
         url = f"https://api.abuseipdb.com/api/v2/check?ipAddress={ip}&maxAgeInDays=90"
         try:
             res = requests.get(url, headers=headers, timeout=20).json()
             data = res.get("data", {})
             flat_abuse = flatten_dict(data)
-            dict_to_table(flat_abuse, "AbuseIPDB Results")
+            dict_to_table(flat_abuse, "AbuseIPDB Reputation & Reports")
         except Exception as e:
             st.error(f"AbuseIPDB Error: {e}")
 
