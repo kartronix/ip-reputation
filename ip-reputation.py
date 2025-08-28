@@ -12,15 +12,26 @@ ABUSE_API_KEY = st.secrets.get("abuseipdb", "")
 SECURITYTRAILS_KEY = st.secrets.get("securitytrails", "")
 
 # -------------------------------
-# Helper: Safe API request
+# Sidebar: Diagnostics
+# -------------------------------
+st.sidebar.title("🔑 API Diagnostics")
+st.sidebar.write("VirusTotal Key:", "✅ Loaded" if VT_API_KEY else "❌ Missing")
+st.sidebar.write("AbuseIPDB Key:", "✅ Loaded" if ABUSE_API_KEY else "❌ Missing")
+st.sidebar.write("SecurityTrails Key:", "✅ Loaded" if SECURITYTRAILS_KEY else "❌ Missing")
+
+# -------------------------------
+# Helper: Safe API request with debug
 # -------------------------------
 def safe_request(url, headers=None, params=None):
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         if resp.status_code == 200:
             return resp.json()
-        return None
-    except Exception:
+        else:
+            st.warning(f"API call failed: {resp.status_code} {resp.text}")
+            return None
+    except Exception as e:
+        st.error(f"Request error: {e}")
         return None
 
 # -------------------------------
