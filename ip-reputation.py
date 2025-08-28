@@ -58,15 +58,17 @@ def get_whois_info(ip_or_domain):
 # AbuseIPDB
 # -------------------------------
 def get_abuseip_info(ip):
+    fields = ["IP Address", "Abuse Confidence", "Country", "Domain", "ISP", "Usage Type", "Total Reports"]
+
     if not ABUSE_API_KEY:
-        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
         url = "https://api.abuseipdb.com/api/v2/check"
         headers = {"Key": ABUSE_API_KEY, "Accept": "application/json"}
         params = {"ipAddress": ip, "maxAgeInDays": 90}
         data = safe_request(url, headers=headers, params=params)
         if not data:
-            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
         d = data.get("data", {})
         abuse_data = {
             "IP Address": d.get("ipAddress", "Not available"),
@@ -79,20 +81,22 @@ def get_abuseip_info(ip):
         }
         return pd.DataFrame(list(abuse_data.items()), columns=["Field", "Value"])
     except Exception:
-        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
 # VirusTotal
 # -------------------------------
 def get_virustotal_info(ip):
+    fields = ["Country", "ASN", "Org", "Reputation", "Harmless Votes", "Malicious Votes"]
+
     if not VT_API_KEY:
-        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
         url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
         headers = {"x-apikey": VT_API_KEY}
         data = safe_request(url, headers=headers)
         if not data:
-            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
         attr = data.get("data", {}).get("attributes", {})
         vt_data = {
             "Country": attr.get("country", "Not available"),
@@ -104,27 +108,29 @@ def get_virustotal_info(ip):
         }
         return pd.DataFrame(list(vt_data.items()), columns=["Field", "Value"])
     except Exception:
-        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
 # SecurityTrails
 # -------------------------------
 def get_securitytrails(ip):
+    fields = ["Hostname", "PTR Record"]
+
     if not SECURITYTRAILS_KEY:
-        return pd.DataFrame([["Error", "API key missing"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
         url = f"https://api.securitytrails.com/v1/ips/{ip}"
         headers = {"APIKEY": SECURITYTRAILS_KEY}
         data = safe_request(url, headers=headers)
         if not data:
-            return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
         st_data = {
             "Hostname": ", ".join(data.get("hostnames", [])) if data.get("hostnames") else "Not available",
             "PTR Record": data.get("ptr", "Not available"),
         }
         return pd.DataFrame(list(st_data.items()), columns=["Field", "Value"])
     except Exception:
-        return pd.DataFrame([["Error", "Error obtaining data"]], columns=["Field", "Value"])
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
 # Streamlit UI
