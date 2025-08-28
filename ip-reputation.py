@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
-import whois
 import pandas as pd
+import ipaddress
 from ipwhois import IPWhois
 
 # -------------------------------
@@ -20,7 +20,17 @@ st.sidebar.write("AbuseIPDB Key:", "✅ Loaded" if ABUSE_API_KEY else "❌ Missi
 st.sidebar.write("SecurityTrails Key:", "✅ Loaded" if SECURITYTRAILS_KEY else "❌ Missing")
 
 # -------------------------------
-# Helper: Safe API request with debug
+# Helper: Validate IP
+# -------------------------------
+def is_valid_ip(value):
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+# -------------------------------
+# Helper: Safe API request
 # -------------------------------
 def safe_request(url, headers=None, params=None):
     try:
@@ -35,34 +45,21 @@ def safe_request(url, headers=None, params=None):
         return None
 
 # -------------------------------
-# WHOIS Info
+# IP WHOIS Info
 # -------------------------------
-def get_whois_info(ip_or_domain):
+def get_ip_whois_info(ip):
     try:
-        w = whois.whois(ip_or_domain)
+        obj = IPWhois(ip)
+        res = obj.lookup_rdap()
         whois_data = {
-            "Domain": w.domain_name if w.domain_name else "Not available",
-            "Registrar": w.registrar if w.registrar else "Not available",
-            "Org": w.org if w.org else "Not available",
-            "Country": w.country if w.country else "Not available",
-            "Creation Date": str(w.creation_date) if w.creation_date else "Not available",
-            "Expiration Date": str(w.expiration_date) if w.expiration_date else "Not available",
-            "Emails": "\n".join(w.emails) if w.emails else "Not available"
+            "ASN": res.get("asn", "Not available"),
+            "Org": res.get("network", {}).get("name", "Not available"),
+            "Country": res.get("asn_country_code", "Not available"),
+            "CIDR": res.get("network", {}).get("cidr", "Not available"),
+            "Emails": "\n".join(res.get("network", {}).get("emails", [])) if res.get("network", {}).get("emails") else "Not available"
         }
     except Exception:
-        # fallback with ipwhois
-        try:
-            obj = IPWhois(ip_or_domain)
-            res = obj.lookup_rdap()
-            whois_data = {
-                "ASN": res.get("asn", "Not available"),
-                "Org": res.get("network", {}).get("name", "Not available"),
-                "Country": res.get("asn_country_code", "Not available"),
-                "CIDR": res.get("network", {}).get("cidr", "Not available"),
-                "Emails": "\n".join(res.get("network", {}).get("emails", [])) if res.get("network", {}).get("emails") else "Not available"
-            }
-        except Exception:
-            whois_data = {"Error": "Error obtaining data"}
+        whois_data = {"Error": "Error obtaining data"}
     return pd.DataFrame(list(whois_data.items()), columns=["Field", "Value"])
 
 # -------------------------------
@@ -146,19 +143,22 @@ def get_securitytrails(ip):
 # -------------------------------
 # Streamlit UI
 # -------------------------------
-st.title("🔍 IP Reputation & WHOIS Lookup")
+st.title("🔍 IP Reputation & Lookup Tool")
 
-ip = st.text_input("Enter an IP address or domain:")
+ip = st.text_input("Enter an IPv4 or IPv6 address:")
 
 if ip:
-    st.subheader("WHOIS Information")
-    st.table(get_whois_info(ip))
+    if is_valid_ip(ip):
+        st.subheader("IP WHOIS Information")
+        st.table(get_ip_whois_info(ip))
 
-    st.subheader("AbuseIPDB Information")
-    st.table(get_abuseip_info(ip))
+        st.subheader("AbuseIPDB Information")
+        st.table(get_abuseip_info(ip))
 
-    st.subheader("VirusTotal Information")
-    st.table(get_virustotal_info(ip))
+        st.subheader("VirusTotal Information")
+        st.table(get_virustotal_info(ip))
 
-    st.subheader("SecurityTrails Information")
-    st.table(get_securitytrails(ip))
+        st.subheader("SecurityTrails Information")
+        st.table(get_securitytrails(ip))
+    else:
+        st.error("❌ Please enter a valid IPv4 or IPv6 address")
