@@ -5,11 +5,16 @@ import ipaddress
 from ipwhois import IPWhois
 
 # -------------------------------
-# Load API Keys from Secrets
+# Load API Keys from Secrets (optional)
 # -------------------------------
 VT_API_KEY = st.secrets.get("virustotal", "")
 ABUSE_API_KEY = st.secrets.get("abuseipdb", "")
 SECURITYTRAILS_KEY = st.secrets.get("securitytrails", "")
+
+ALIENVAULT_KEY = st.secrets.get("alienvault", "")  # Optional fallback
+IPQS_KEY = st.secrets.get("ipqs", "")              # Optional fallback
+CENSYS_UID = st.secrets.get("censys_uid", "")      # Optional fallback
+CENSYS_SECRET = st.secrets.get("censys_secret", "")
 
 # -------------------------------
 # Sidebar: Diagnostics
@@ -18,6 +23,9 @@ st.sidebar.title("🔑 API Diagnostics")
 st.sidebar.write("VirusTotal Key:", "✅ Loaded" if VT_API_KEY else "❌ Missing")
 st.sidebar.write("AbuseIPDB Key:", "✅ Loaded" if ABUSE_API_KEY else "❌ Missing")
 st.sidebar.write("SecurityTrails Key:", "✅ Loaded" if SECURITYTRAILS_KEY else "❌ Missing")
+st.sidebar.write("AlienVault Key:", "✅ Loaded" if ALIENVAULT_KEY else "❌ Missing")
+st.sidebar.write("IPQS Key:", "✅ Loaded" if IPQS_KEY else "❌ Missing")
+st.sidebar.write("Censys Key:", "✅ Loaded" if CENSYS_UID and CENSYS_SECRET else "❌ Missing")
 
 # -------------------------------
 # Helper: Validate IP
@@ -32,9 +40,9 @@ def is_valid_ip(value):
 # -------------------------------
 # Helper: Safe API request
 # -------------------------------
-def safe_request(url, headers=None, params=None):
+def safe_request(url, headers=None, params=None, auth=None):
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        resp = requests.get(url, headers=headers, params=params, auth=auth, timeout=15)
         if resp.status_code == 200:
             return resp.json()
         else:
@@ -45,7 +53,7 @@ def safe_request(url, headers=None, params=None):
         return None
 
 # -------------------------------
-# IP WHOIS Info
+# IP WHOIS Info (IPWhois)
 # -------------------------------
 def get_ip_whois_info(ip):
     try:
@@ -67,7 +75,6 @@ def get_ip_whois_info(ip):
 # -------------------------------
 def get_abuseip_info(ip):
     fields = ["IP Address", "Abuse Confidence", "Country", "Domain", "ISP", "Usage Type", "Total Reports"]
-
     if not ABUSE_API_KEY:
         return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
@@ -92,11 +99,32 @@ def get_abuseip_info(ip):
         return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
+# IPQualityScore fallback
+# -------------------------------
+def get_ipqs_info(ip):
+    fields = ["Fraud Score", "VPN/Proxy", "TOR", "Bot Status"]
+    try:
+        if not IPQS_KEY:
+            return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
+        url = f"https://ipqualityscore.com/api/json/ip/{IPQS_KEY}/{ip}"
+        data = safe_request(url)
+        if not data:
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+        ipqs_data = {
+            "Fraud Score": data.get("fraud_score", "Not available"),
+            "VPN/Proxy": data.get("vpn", "Not available"),
+            "TOR": data.get("tor", "Not available"),
+            "Bot Status": data.get("bot_status", "Not available")
+        }
+        return pd.DataFrame(list(ipqs_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+
+# -------------------------------
 # VirusTotal
 # -------------------------------
 def get_virustotal_info(ip):
     fields = ["Country", "ASN", "Org", "Reputation", "Harmless Votes", "Malicious Votes"]
-
     if not VT_API_KEY:
         return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
@@ -119,11 +147,28 @@ def get_virustotal_info(ip):
         return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
+# AlienVault OTX fallback
+# -------------------------------
+def get_alienvault_info(ip):
+    fields = ["Reputation", "Malicious Indicator Count"]
+    try:
+        url = f"https://otx.alienvault.com/api/v1/indicators/IPv4/{ip}/general"  # IPv4 only endpoint; for IPv6 use IPv6 endpoint
+        data = safe_request(url)
+        if not data:
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+        av_data = {
+            "Reputation": data.get("reputation", "Not available"),
+            "Malicious Indicator Count": len(data.get("malware", [])) if "malware" in data else 0
+        }
+        return pd.DataFrame(list(av_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+
+# -------------------------------
 # SecurityTrails
 # -------------------------------
 def get_securitytrails(ip):
     fields = ["Hostname", "PTR Record"]
-
     if not SECURITYTRAILS_KEY:
         return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
     try:
@@ -141,6 +186,27 @@ def get_securitytrails(ip):
         return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
 
 # -------------------------------
+# Censys fallback
+# -------------------------------
+def get_censys_info(ip):
+    fields = ["Observed Ports", "Services"]
+    try:
+        if not CENSYS_UID or not CENSYS_SECRET:
+            return pd.DataFrame([(f, "Not available (API key missing)") for f in fields], columns=["Field", "Value"])
+        url = f"https://search.censys.io/api/v2/hosts/{ip}"
+        data = safe_request(url, auth=(CENSYS_UID, CENSYS_SECRET))
+        if not data:
+            return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+        services = data.get("services", [])
+        censys_data = {
+            "Observed Ports": ", ".join([str(s.get("port")) for s in services]) if services else "Not available",
+            "Services": ", ".join([s.get("service_name", "N/A") for s in services]) if services else "Not available"
+        }
+        return pd.DataFrame(list(censys_data.items()), columns=["Field", "Value"])
+    except Exception:
+        return pd.DataFrame([(f, "Error obtaining data") for f in fields], columns=["Field", "Value"])
+
+# -------------------------------
 # Streamlit UI
 # -------------------------------
 st.title("🔍 IP Reputation & Lookup Tool")
@@ -149,16 +215,26 @@ ip = st.text_input("Enter an IPv4 or IPv6 address:")
 
 if ip:
     if is_valid_ip(ip):
-        st.subheader("IP WHOIS Information")
+        st.subheader("IPWhois Information")
         st.table(get_ip_whois_info(ip))
 
         st.subheader("AbuseIPDB Information")
         st.table(get_abuseip_info(ip))
 
+        st.subheader("IPQualityScore Fallback")
+        st.table(get_ipqs_info(ip))
+
         st.subheader("VirusTotal Information")
         st.table(get_virustotal_info(ip))
 
+        st.subheader("AlienVault OTX Fallback")
+        st.table(get_alienvault_info(ip))
+
         st.subheader("SecurityTrails Information")
         st.table(get_securitytrails(ip))
+
+        st.subheader("Censys Fallback")
+        st.table(get_censys_info(ip))
+
     else:
         st.error("❌ Please enter a valid IPv4 or IPv6 address")
